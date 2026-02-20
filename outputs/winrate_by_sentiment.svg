@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360">
+<text x="320.0" y="20" text-anchor="middle" font-size="16">Win Rate (%) by Sentiment</text>
+<line x1="40" y1="320" x2="600" y2="320" stroke="black"/>
+<line x1="40" y1="40" x2="40" y2="320" stroke="black"/>
+<rect x="50.0" y="167.8" width="260.0" height="152.2" fill="#4e79a7"/>
+<text x="180.0" y="335" text-anchor="middle" font-size="12">Fear</text>
+<text x="180.0" y="162.8" text-anchor="middle" font-size="11">36.56</text>
+<rect x="330.0" y="40.0" width="260.0" height="280.0" fill="#4e79a7"/>
+<text x="460.0" y="335" text-anchor="middle" font-size="12">Greed</text>
+<text x="460.0" y="35.0" text-anchor="middle" font-size="11">67.25</text>
+<text x="15" y="180.0" transform="rotate(-90, 15, 180.0)" text-anchor="middle" font-size="12">Win Rate %</text>
+</svg>
