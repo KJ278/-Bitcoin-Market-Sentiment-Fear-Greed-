@@ -1,5 +1,7 @@
 # Bitcoin Market Sentiment vs Trader Behavior
 
+- Source files: sentiment=fear_greed_index/sentiment.csv | trades=fear_greed_index/trades.csv
+
 ## Methodology
 - Load and profile sentiment/trade CSV files (rows, columns, missing values, duplicates).
 - Normalize timestamps to daily dates and align trade records with same-day sentiment.
@@ -36,7 +38,7 @@
 ### Key insights
 - Performance differs by sentiment: Fear avg PnL=-333.05 vs Greed avg PnL=803.88.
 - Risk profile differs: drawdown proxy Fear=-5328.74 vs Greed=0.0.
-- Behavior shifts: avg trades/day and leverage differ between Fear and Greed regimes.
+- Behavior shifts: average trades/day and leverage are not identical across sentiment regimes.
 
 ## Part C — Actionable output
 1. During Fear days, reduce leverage and position size for high-leverage/inconsistent segments.

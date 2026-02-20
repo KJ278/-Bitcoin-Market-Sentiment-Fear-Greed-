@@ -1,45 +1,49 @@
 # Bitcoin Market Sentiment vs Trader Behavior (Fear/Greed)
 
-This project is now built around your sample sentiment format:
-- `timestamp` (Unix seconds)
-- `value` (index value)
-- `classification` (Fear / Extreme Fear / Neutral / Greed / Extreme Greed)
-- `date` (YYYY-MM-DD)
+This project is configured so you can use **your own files** from a folder named:
 
-and a trade file containing trader-level PnL activity.
+- `fear_greed_index/`
 
-## Files
+## 1) Put your data in `fear_greed_index/`
 
-- `analysis.py` — Reproducible analysis pipeline.
-- `data/sentiment.csv` — Example sentiment file in your shown format.
-- `data/trades.csv` — Example trades file.
-- `outputs/` — Generated report, tables, and charts.
+Add two CSV files in that folder:
 
-## Required trade columns
+- a **sentiment** CSV (example schema you shared):
+  - `timestamp` (Unix seconds) or `date`
+  - `value`
+  - `classification` (Fear / Extreme Fear / Neutral / Greed / Extreme Greed)
+- a **trades** CSV:
+  - required: date/timestamp + pnl
+  - recommended: trader_id, side, trade_size, leverage
 
-At minimum, the trade file must include:
-- one date/timestamp column: `date` or `timestamp`
-- one PnL column: `pnl` (or `profit`, `realized_pnl`, `net_pnl`)
+> File names can vary. The script will auto-detect sentiment/trades files by filename hints.
 
-Recommended columns for full analysis:
-- `trader_id`
-- `side` (`long`/`short` or buy/sell aliases)
-- `trade_size`
-- `leverage`
-
-## Run
+## 2) Run
 
 ```bash
 python analysis.py
 ```
 
-Or with custom files:
+Default behavior:
+- input folder: `fear_greed_index/`
+- output folder: `outputs/`
+
+## 3) Optional explicit file paths
 
 ```bash
-python analysis.py --sentiment path/to/sentiment.csv --trades path/to/trades.csv --outdir outputs
+python analysis.py \
+  --sentiment fear_greed_index/my_sentiment.csv \
+  --trades fear_greed_index/my_trades.csv \
+  --outdir outputs
 ```
 
-## Deliverables generated
+You can also change the input folder root:
+
+```bash
+python analysis.py --input-dir fear_greed_index --outdir outputs
+```
+
+## Generated deliverables
 
 - `outputs/report.md` (methodology + insights + strategy ideas)
 - `outputs/daily_metrics.csv`
@@ -47,3 +51,8 @@ python analysis.py --sentiment path/to/sentiment.csv --trades path/to/trades.csv
 - `outputs/segment_summary.csv`
 - `outputs/pnl_by_sentiment.svg`
 - `outputs/winrate_by_sentiment.svg`
+
+## Current repo examples
+
+- `fear_greed_index/sentiment.csv`
+- `fear_greed_index/trades.csv`

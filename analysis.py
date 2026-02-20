@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Fear/Greed sentiment vs trader behavior analysis.
 
-Designed to work with sentiment data shaped like:
-- timestamp (unix seconds)
-- value
-- classification
-- date
+Drop your files inside `fear_greed_index/` and run:
+    python analysis.py
 
-and trade data with common field aliases for trader, side, size, leverage, and pnl.
+Expected sentiment columns (aliases supported):
+- timestamp/date, value, classification
+
+Expected trades columns (aliases supported):
+- timestamp/date, pnl (+ optional trader_id, side, trade_size, leverage)
 """
 
 from __future__ import annotations
@@ -18,6 +19,10 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from statistics import mean, median
+
+
+DEFAULT_INPUT_DIR = Path('fear_greed_index')
+DEFAULT_OUTPUT_DIR = Path('outputs')
 
 
 def normalize_key(name: str) -> str:
@@ -31,7 +36,7 @@ def parse_date(value: str):
 
     if raw.isdigit():
         iv = int(raw)
-        if iv > 10_000_000_000:  # ms
+        if iv > 10_000_000_000:
             iv //= 1000
         try:
             return datetime.utcfromtimestamp(iv).date()
@@ -84,8 +89,54 @@ def find_col(headers, aliases, required=False):
         if alias in normalized:
             return normalized[alias]
     if required:
-        raise ValueError(f'Missing required column. Expected one of aliases: {aliases}. Found: {headers}')
+        raise ValueError(f'Missing required column. Expected aliases {aliases}. Found: {headers}')
     return None
+
+
+def resolve_input_files(input_dir: Path, sentiment_path: str | None, trades_path: str | None):
+    if sentiment_path and trades_path:
+        return Path(sentiment_path), Path(trades_path)
+
+    if not input_dir.exists():
+        raise FileNotFoundError(
+            f"Input folder '{input_dir}' not found. Create it and add your CSV files, or pass --sentiment/--trades."
+        )
+
+    csvs = sorted(input_dir.glob('*.csv'))
+    if not csvs:
+        raise FileNotFoundError(
+            f"No CSV files found in '{input_dir}'. Add sentiment/trades CSVs or pass --sentiment/--trades."
+        )
+
+    def score_sentiment(p: Path):
+        n = p.name.lower()
+        s = 0
+        if 'sentiment' in n:
+            s += 5
+        if 'fear' in n or 'greed' in n:
+            s += 3
+        if 'index' in n:
+            s += 2
+        return s
+
+    def score_trades(p: Path):
+        n = p.name.lower()
+        s = 0
+        if 'trade' in n:
+            s += 5
+        if 'trader' in n:
+            s += 3
+        if 'position' in n or 'account' in n:
+            s += 2
+        return s
+
+    sent = Path(sentiment_path) if sentiment_path else max(csvs, key=score_sentiment)
+    trade = Path(trades_path) if trades_path else max([p for p in csvs if p != sent] or csvs, key=score_trades)
+
+    if sent == trade:
+        raise ValueError('Could not uniquely resolve sentiment and trades files. Pass --sentiment and --trades explicitly.')
+
+    return sent, trade
 
 
 def load_sentiment(path: Path):
@@ -322,12 +373,14 @@ def write_svg_bar(path: Path, data: dict, title: str, y_label: str):
     path.write_text('\n'.join(parts))
 
 
-def build_report(out_dir: Path, sent_profile, trade_profile, comp, seg):
+def build_report(out_dir: Path, sent_profile, trade_profile, comp, seg, source_info: str):
     fear = comp.get('Fear', {})
     greed = comp.get('Greed', {})
 
     lines = [
         '# Bitcoin Market Sentiment vs Trader Behavior',
+        '',
+        f'- Source files: {source_info}',
         '',
         '## Methodology',
         '- Load and profile sentiment/trade CSV files (rows, columns, missing values, duplicates).',
@@ -366,7 +419,7 @@ def build_report(out_dir: Path, sent_profile, trade_profile, comp, seg):
             '### Key insights',
             f"- Performance differs by sentiment: Fear avg PnL={fear.get('avg_daily_pnl',0)} vs Greed avg PnL={greed.get('avg_daily_pnl',0)}.",
             f"- Risk profile differs: drawdown proxy Fear={fear.get('drawdown_proxy',0)} vs Greed={greed.get('drawdown_proxy',0)}.",
-            f"- Behavior shifts: avg trades/day and leverage differ between Fear and Greed regimes.",
+            '- Behavior shifts: average trades/day and leverage are not identical across sentiment regimes.',
             '',
             '## Part C — Actionable output',
             '1. During Fear days, reduce leverage and position size for high-leverage/inconsistent segments.',
@@ -379,16 +432,20 @@ def build_report(out_dir: Path, sent_profile, trade_profile, comp, seg):
 
 def main():
     parser = argparse.ArgumentParser(description='Fear/Greed trader behavior analysis')
-    parser.add_argument('--sentiment', default='data/sentiment.csv', help='Path to sentiment CSV')
-    parser.add_argument('--trades', default='data/trades.csv', help='Path to trades CSV')
-    parser.add_argument('--outdir', default='outputs', help='Output directory')
+    parser.add_argument('--input-dir', default=str(DEFAULT_INPUT_DIR), help='Folder containing your CSV files (default: fear_greed_index)')
+    parser.add_argument('--sentiment', default=None, help='Path to sentiment CSV (optional override)')
+    parser.add_argument('--trades', default=None, help='Path to trades CSV (optional override)')
+    parser.add_argument('--outdir', default=str(DEFAULT_OUTPUT_DIR), help='Output directory')
     args = parser.parse_args()
 
+    input_dir = Path(args.input_dir)
     out_dir = Path(args.outdir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    sent_rows, sent_headers, sentiment = load_sentiment(Path(args.sentiment))
-    trade_rows, trade_headers, trades = load_trades(Path(args.trades))
+    sentiment_file, trades_file = resolve_input_files(input_dir, args.sentiment, args.trades)
+
+    sent_rows, sent_headers, sentiment = load_sentiment(sentiment_file)
+    trade_rows, trade_headers, trades = load_trades(trades_file)
 
     sent_profile = profile_rows(sent_rows, sent_headers)
     trade_profile = profile_rows(trade_rows, trade_headers)
@@ -402,9 +459,12 @@ def main():
     write_csv(out_dir / 'segment_summary.csv', [{'segment': k, **v} for k, v in seg.items()])
     write_svg_bar(out_dir / 'pnl_by_sentiment.svg', {k: v['avg_daily_pnl'] for k, v in comp.items()}, 'Average Daily PnL by Sentiment', 'PnL')
     write_svg_bar(out_dir / 'winrate_by_sentiment.svg', {k: 100 * v['avg_win_rate'] for k, v in comp.items()}, 'Win Rate by Sentiment', 'Win rate %')
-    build_report(out_dir, sent_profile, trade_profile, comp, seg)
+
+    source_info = f"sentiment={sentiment_file} | trades={trades_file}"
+    build_report(out_dir, sent_profile, trade_profile, comp, seg, source_info)
 
     print('Analysis complete.')
+    print(source_info)
     print(f'Sentiment records: {len(sentiment)} | Trades: {len(trades)} | Output dir: {out_dir}')
 
 
