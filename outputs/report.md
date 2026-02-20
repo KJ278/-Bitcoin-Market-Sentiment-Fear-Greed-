@@ -1,50 +1,43 @@
 # Bitcoin Market Sentiment vs Trader Behavior
 
 ## Methodology
-- Loaded sentiment and trade datasets, profiled rows/columns/missing values/duplicates, and parsed timestamps to daily grain.
-- Aligned trades with same-day sentiment labels and computed daily metrics: PnL, win rate, average size, leverage, trade count, and long/short ratio.
-- Compared Fear vs Greed periods and created trader segments (high vs low leverage, frequent vs infrequent, consistent vs inconsistent winners).
+- Load and profile sentiment/trade CSV files (rows, columns, missing values, duplicates).
+- Normalize timestamps to daily dates and align trade records with same-day sentiment.
+- Compute daily metrics, compare Fear vs Greed periods, and build trader segments.
 
-## Part A — Data Preparation
-- Sentiment dataset: **122 rows**, **3 columns**, duplicates=1, missing={'timestamp': 0, 'fear_greed_value': 0, 'sentiment': 0}.
-- Trades dataset: **11754 rows**, **6 columns**, duplicates=1, missing={'trader_id': 0, 'timestamp': 0, 'side': 0, 'trade_size': 0, 'leverage': 1, 'pnl': 0}.
-- Timestamps converted to date and joined by date (daily level).
+## Part A — Data preparation
+- Sentiment: rows=25, cols=4, duplicates=0, missing={'timestamp': 0, 'value': 0, 'classification': 0, 'date': 0}
+- Trades: rows=899, cols=6, duplicates=1, missing={'trader_id': 0, 'timestamp': 0, 'side': 0, 'trade_size': 0, 'leverage': 1, 'pnl': 0}
+- Timestamp fields converted/aligned at daily level.
 
-## Part B — Evidence-based Analysis
-### Fear vs Greed comparison
+## Part B — Analysis
+### Fear vs Greed
 
 | Metric | Fear | Greed |
 |---|---:|---:|
-| Days | 61 | 46 |
-| Avg daily PnL | -37.24 | 53.04 |
-| Avg win rate | 0.3656 | 0.6725 |
-| Drawdown proxy (worst day PnL) | -69.85 | 21.14 |
-| Avg trades/day | 96.57 | 96.93 |
-| Avg leverage | 3.39 | 3.47 |
+| Days | 16 | 7 |
+| Avg daily PnL | -333.05 | 803.88 |
+| Avg win rate | 0.3266 | 0.8244 |
+| Drawdown proxy | -5328.74 | 0.0 |
+| Avg trades/day | 35.31 | 35 |
+| Avg leverage | 5.52 | 5.84 |
 
-### Segment summary
+### Segments
 
 | Segment | # Traders | Avg total PnL | Avg win rate | Avg trades | Avg leverage |
 |---|---:|---:|---:|---:|---:|
-| High leverage | 40 | 6.85 | 0.5041 | 144.43 | 3.56 |
-| Low leverage | 40 | 0.51 | 0.4943 | 149.43 | 3.3 |
-| Frequent traders | 43 | 3.21 | 0.4973 | 159.42 | 3.43 |
-| Infrequent traders | 37 | 4.22 | 0.5013 | 132.41 | 3.43 |
-| Consistent winners | 11 | 26.38 | 0.5847 | 142.09 | 3.51 |
-| Inconsistent | 69 | 0.06 | 0.4855 | 147.7 | 3.42 |
+| High leverage | 10 | -13.25 | 0.4523 | 45.1 | 5.88 |
+| Low leverage | 10 | 41.07 | 0.4847 | 44.8 | 5.31 |
+| Frequent traders | 10 | -20.92 | 0.4736 | 50.4 | 5.55 |
+| Infrequent traders | 10 | 48.74 | 0.4634 | 39.5 | 5.64 |
+| Consistent winners | 1 | 325.81 | 0.6111 | 36 | 5.28 |
+| Inconsistent | 19 | -2.5 | 0.461 | 45.42 | 5.61 |
 
-### Key insights (3)
-- Greed days showed stronger profitability than Fear days (avg daily PnL 53.04 vs -37.24) and higher win rate (67.25% vs 36.56%).
-- Risk was asymmetric: Fear days had a deeper drawdown proxy (-69.85) than Greed days (21.14).
-- Behavior shifted mildly by sentiment: trades/day and leverage differed (Fear 96.57 trades/day, lev 3.39; Greed 96.93 trades/day, lev 3.47).
+### Key insights
+- Performance differs by sentiment: Fear avg PnL=-333.05 vs Greed avg PnL=803.88.
+- Risk profile differs: drawdown proxy Fear=-5328.74 vs Greed=0.0.
+- Behavior shifts: avg trades/day and leverage differ between Fear and Greed regimes.
 
-## Part C — Actionable Output
-1. **Fear-day defensive rule:** For high-leverage and inconsistent traders, cap leverage near the low-leverage segment average and reduce trade frequency until sentiment exits Fear.
-2. **Greed-day selective aggression:** Allow slightly higher trade frequency for consistent winners, while keeping position sizing constant to avoid oversized downside tails.
-
-## Artifacts
-- `outputs/daily_metrics.csv`
-- `outputs/fear_vs_greed_comparison.csv`
-- `outputs/segment_summary.csv`
-- `outputs/pnl_by_sentiment.svg`
-- `outputs/winrate_by_sentiment.svg`
+## Part C — Actionable output
+1. During Fear days, reduce leverage and position size for high-leverage/inconsistent segments.
+2. During Greed days, allow higher trade frequency only for consistent winners while keeping risk caps fixed.

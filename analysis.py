@@ -1,99 +1,171 @@
 #!/usr/bin/env python3
-"""Sentiment vs trader behavior analysis using only Python stdlib."""
+"""Fear/Greed sentiment vs trader behavior analysis.
+
+Designed to work with sentiment data shaped like:
+- timestamp (unix seconds)
+- value
+- classification
+- date
+
+and trade data with common field aliases for trader, side, size, leverage, and pnl.
+"""
+
 from __future__ import annotations
+
+import argparse
 import csv
-from collections import Counter, defaultdict
-from dataclasses import dataclass
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from statistics import mean, median
 
-DATA_DIR = Path('data')
-OUT_DIR = Path('outputs')
-OUT_DIR.mkdir(exist_ok=True)
 
-SENTIMENT_FILE = DATA_DIR / 'sentiment.csv'
-TRADES_FILE = DATA_DIR / 'trades.csv'
+def normalize_key(name: str) -> str:
+    return ''.join(ch.lower() for ch in name if ch.isalnum())
 
 
-def parse_date(value: str) -> datetime.date:
-    value = value.strip()
-    fmts = ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y', '%d-%m-%Y']
-    for fmt in fmts:
+def parse_date(value: str):
+    raw = (value or '').strip()
+    if not raw:
+        return None
+
+    if raw.isdigit():
+        iv = int(raw)
+        if iv > 10_000_000_000:  # ms
+            iv //= 1000
         try:
-            return datetime.strptime(value, fmt).date()
+            return datetime.utcfromtimestamp(iv).date()
+        except Exception:
+            pass
+
+    for fmt in ('%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y', '%d-%m-%Y', '%Y/%m/%d'):
+        try:
+            return datetime.strptime(raw, fmt).date()
         except ValueError:
             continue
-    raise ValueError(f'Unsupported timestamp format: {value}')
+
+    try:
+        return datetime.fromisoformat(raw.replace('Z', '+00:00')).date()
+    except Exception:
+        return None
 
 
-def to_float(v: str):
-    v = (v or '').strip()
-    if v == '':
+def to_float(value: str):
+    raw = (value or '').strip().replace(',', '')
+    if raw == '':
         return None
     try:
-        return float(v)
+        return float(raw)
     except ValueError:
         return None
 
 
-def profile_csv(path: Path):
-    with path.open() as f:
-        reader = list(csv.DictReader(f))
-    cols = reader[0].keys() if reader else []
-    missing = {c: 0 for c in cols}
-    for row in reader:
-        for c in cols:
-            if row[c] is None or str(row[c]).strip() == '':
-                missing[c] += 1
-    duplicates = len(reader) - len({tuple((c, row[c]) for c in cols) for row in reader})
-    return {'rows': len(reader), 'cols': len(cols), 'missing': missing, 'duplicates': duplicates, 'data': reader}
+def profile_rows(rows, headers):
+    missing = {h: 0 for h in headers}
+    for row in rows:
+        for h in headers:
+            if (row.get(h) or '').strip() == '':
+                missing[h] += 1
+    duplicates = len(rows) - len({tuple((h, row.get(h, '')) for h in headers) for row in rows})
+    return {'rows': len(rows), 'cols': len(headers), 'missing': missing, 'duplicates': duplicates}
 
 
-def load_sentiment(rows):
-    out = {}
-    for r in rows:
-        d = parse_date(r['timestamp'])
-        val = to_float(r.get('fear_greed_value'))
-        label = (r.get('sentiment') or '').strip().title()
-        if not label:
-            label = 'Fear' if (val is not None and val < 45) else ('Greed' if (val is not None and val > 55) else 'Neutral')
-        out[d] = {'value': val, 'sentiment': label}
-    return out
+def read_csv(path: Path):
+    with path.open(newline='') as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        headers = reader.fieldnames or []
+    return rows, headers
 
 
-def load_trades(rows):
-    trades = []
-    for r in rows:
-        try:
-            d = parse_date(r['timestamp'])
-        except Exception:
+def find_col(headers, aliases, required=False):
+    normalized = {normalize_key(h): h for h in headers}
+    for alias in aliases:
+        if alias in normalized:
+            return normalized[alias]
+    if required:
+        raise ValueError(f'Missing required column. Expected one of aliases: {aliases}. Found: {headers}')
+    return None
+
+
+def load_sentiment(path: Path):
+    rows, headers = read_csv(path)
+    date_col = find_col(headers, ['date', 'day'])
+    ts_col = find_col(headers, ['timestamp', 'time', 'datetime'])
+    value_col = find_col(headers, ['value', 'feargreedvalue', 'indexvalue'])
+    cls_col = find_col(headers, ['classification', 'sentiment', 'label'])
+
+    data = {}
+    for row in rows:
+        d = parse_date(row.get(date_col, '')) if date_col else None
+        if d is None and ts_col:
+            d = parse_date(row.get(ts_col, ''))
+        if d is None:
             continue
-        trade = {
-            'trader_id': (r.get('trader_id') or 'UNKNOWN').strip(),
-            'date': d,
-            'side': (r.get('side') or '').strip().lower(),
-            'trade_size': to_float(r.get('trade_size')) or 0.0,
-            'leverage': to_float(r.get('leverage')),
-            'pnl': to_float(r.get('pnl')) or 0.0,
-        }
-        trades.append(trade)
-    return trades
+
+        val = to_float(row.get(value_col, '')) if value_col else None
+        cls = (row.get(cls_col, '') or '').strip()
+        if not cls:
+            cls = 'Fear' if (val is not None and val < 45) else ('Greed' if (val is not None and val > 55) else 'Neutral')
+
+        cls = cls.title()
+        if cls == 'Extreme Fear':
+            cls = 'Fear'
+        elif cls == 'Extreme Greed':
+            cls = 'Greed'
+
+        data[d] = {'value': val, 'sentiment': cls}
+
+    return rows, headers, data
 
 
-def pct(n, d):
-    return 0.0 if d == 0 else 100.0 * n / d
+def load_trades(path: Path):
+    rows, headers = read_csv(path)
+    date_col = find_col(headers, ['date', 'day'])
+    ts_col = find_col(headers, ['timestamp', 'time', 'datetime', 'opentime'], required=not date_col)
+    trader_col = find_col(headers, ['traderid', 'account', 'accountid', 'uid', 'user'])
+    side_col = find_col(headers, ['side', 'direction', 'position', 'longshort'])
+    size_col = find_col(headers, ['tradesize', 'size', 'qty', 'quantity', 'notional'])
+    lev_col = find_col(headers, ['leverage', 'lev', 'marginmultiple'])
+    pnl_col = find_col(headers, ['pnl', 'realizedpnl', 'profit', 'netpnl'], required=True)
+
+    trades = []
+    for row in rows:
+        d = parse_date(row.get(date_col, '')) if date_col else None
+        if d is None and ts_col:
+            d = parse_date(row.get(ts_col, ''))
+        if d is None:
+            continue
+
+        side = (row.get(side_col, '') if side_col else '').strip().lower()
+        if side in ('buy', 'bull', 'longs'):
+            side = 'long'
+        if side in ('sell', 'bear', 'shorts'):
+            side = 'short'
+
+        trades.append(
+            {
+                'date': d,
+                'trader_id': (row.get(trader_col, '') if trader_col else '').strip() or 'UNKNOWN',
+                'side': side,
+                'trade_size': to_float(row.get(size_col, '')) if size_col else 0.0,
+                'leverage': to_float(row.get(lev_col, '')) if lev_col else None,
+                'pnl': to_float(row.get(pnl_col, '')) or 0.0,
+            }
+        )
+
+    return rows, headers, trades
 
 
 def summarize_daily(trades, sentiment_map):
-    daily = defaultdict(lambda: {'trades': 0, 'pnl': 0.0, 'wins': 0, 'sizes': [], 'levs': [], 'long': 0, 'short': 0, 'traders': set()})
+    agg = defaultdict(lambda: {'pnl': 0.0, 'wins': 0, 'trades': 0, 'sizes': [], 'levs': [], 'long': 0, 'short': 0, 'traders': set()})
     for t in trades:
-        d = t['date']
-        rec = daily[d]
-        rec['trades'] += 1
+        rec = agg[t['date']]
         rec['pnl'] += t['pnl']
         rec['wins'] += 1 if t['pnl'] > 0 else 0
-        rec['sizes'].append(t['trade_size'])
+        rec['trades'] += 1
+        if t['trade_size'] is not None:
+            rec['sizes'].append(t['trade_size'])
         if t['leverage'] is not None:
             rec['levs'].append(t['leverage'])
         if t['side'] == 'long':
@@ -102,214 +174,238 @@ def summarize_daily(trades, sentiment_map):
             rec['short'] += 1
         rec['traders'].add(t['trader_id'])
 
-    rows = []
-    for d, rec in sorted(daily.items()):
-        senti = sentiment_map.get(d, {'sentiment': 'Unknown', 'value': None})
-        rows.append({
-            'date': d.isoformat(),
-            'sentiment': senti['sentiment'],
-            'fear_greed_value': senti['value'],
-            'num_trades': rec['trades'],
-            'daily_pnl': round(rec['pnl'], 2),
-            'win_rate': round(rec['wins'] / rec['trades'], 4) if rec['trades'] else 0.0,
-            'avg_trade_size': round(mean(rec['sizes']), 2) if rec['sizes'] else 0.0,
-            'avg_leverage': round(mean(rec['levs']), 2) if rec['levs'] else 0.0,
-            'long_short_ratio': round(rec['long'] / rec['short'], 3) if rec['short'] else None,
-            'active_traders': len(rec['traders']),
-        })
-    return rows
+    out = []
+    for d in sorted(agg.keys()):
+        rec = agg[d]
+        s = sentiment_map.get(d, {'sentiment': 'Unknown', 'value': None})
+        out.append(
+            {
+                'date': d.isoformat(),
+                'sentiment': s['sentiment'],
+                'fear_greed_value': s['value'],
+                'num_trades': rec['trades'],
+                'daily_pnl': round(rec['pnl'], 2),
+                'win_rate': round(rec['wins'] / rec['trades'], 4) if rec['trades'] else 0.0,
+                'avg_trade_size': round(mean(rec['sizes']), 2) if rec['sizes'] else 0.0,
+                'avg_leverage': round(mean(rec['levs']), 2) if rec['levs'] else 0.0,
+                'long_short_ratio': round(rec['long'] / rec['short'], 3) if rec['short'] else None,
+                'active_traders': len(rec['traders']),
+            }
+        )
+    return out
 
 
-def grouped_comparison(daily):
-    groups = defaultdict(list)
-    for r in daily:
-        if r['sentiment'] in {'Fear', 'Greed'}:
-            groups[r['sentiment']].append(r)
-    comp = {}
-    for g, rows in groups.items():
-        pnls = [x['daily_pnl'] for x in rows]
-        wrs = [x['win_rate'] for x in rows]
-        trade_counts = [x['num_trades'] for x in rows]
-        levs = [x['avg_leverage'] for x in rows if x['avg_leverage']]
-        dd_proxy = min(pnls) if pnls else 0.0
-        comp[g] = {
+def compare_fear_greed(daily_rows):
+    grouped = defaultdict(list)
+    for r in daily_rows:
+        if r['sentiment'] in ('Fear', 'Greed'):
+            grouped[r['sentiment']].append(r)
+
+    summary = {}
+    for k, rows in grouped.items():
+        pnls = [r['daily_pnl'] for r in rows]
+        win = [r['win_rate'] for r in rows]
+        trades = [r['num_trades'] for r in rows]
+        levs = [r['avg_leverage'] for r in rows if r['avg_leverage']]
+
+        cum = 0.0
+        peak = 0.0
+        dd = 0.0
+        for p in pnls:
+            cum += p
+            peak = max(peak, cum)
+            dd = min(dd, cum - peak)
+
+        summary[k] = {
             'days': len(rows),
             'avg_daily_pnl': round(mean(pnls), 2) if pnls else 0.0,
             'median_daily_pnl': round(median(pnls), 2) if pnls else 0.0,
-            'avg_win_rate': round(mean(wrs), 4) if wrs else 0.0,
-            'avg_trades_per_day': round(mean(trade_counts), 2) if trade_counts else 0.0,
+            'avg_win_rate': round(mean(win), 4) if win else 0.0,
+            'avg_trades_per_day': round(mean(trades), 2) if trades else 0.0,
             'avg_leverage': round(mean(levs), 2) if levs else 0.0,
-            'drawdown_proxy': round(dd_proxy, 2),
+            'drawdown_proxy': round(dd, 2),
         }
-    return comp
+    return summary
 
 
-def build_trader_segments(trades):
-    trader = defaultdict(lambda: {'pnl': 0.0, 'trades': 0, 'wins': 0, 'levs': [], 'sizes': []})
+def segment_traders(trades):
+    per = defaultdict(lambda: {'pnl': 0.0, 'wins': 0, 'trades': 0, 'lev': [], 'size': []})
     for t in trades:
-        tr = trader[t['trader_id']]
-        tr['pnl'] += t['pnl']
-        tr['trades'] += 1
-        tr['wins'] += 1 if t['pnl'] > 0 else 0
+        p = per[t['trader_id']]
+        p['pnl'] += t['pnl']
+        p['wins'] += 1 if t['pnl'] > 0 else 0
+        p['trades'] += 1
         if t['leverage'] is not None:
-            tr['levs'].append(t['leverage'])
-        tr['sizes'].append(t['trade_size'])
+            p['lev'].append(t['leverage'])
+        if t['trade_size'] is not None:
+            p['size'].append(t['trade_size'])
 
     rows = []
-    for tid, rec in trader.items():
-        avg_lev = mean(rec['levs']) if rec['levs'] else 0.0
-        rows.append({
-            'trader_id': tid,
-            'total_pnl': rec['pnl'],
-            'trades': rec['trades'],
-            'win_rate': rec['wins'] / rec['trades'] if rec['trades'] else 0,
-            'avg_lev': avg_lev,
-            'avg_size': mean(rec['sizes']) if rec['sizes'] else 0,
-        })
+    for trader_id, p in per.items():
+        rows.append(
+            {
+                'trader_id': trader_id,
+                'total_pnl': p['pnl'],
+                'trades': p['trades'],
+                'win_rate': p['wins'] / p['trades'] if p['trades'] else 0.0,
+                'avg_leverage': mean(p['lev']) if p['lev'] else 0.0,
+                'avg_trade_size': mean(p['size']) if p['size'] else 0.0,
+            }
+        )
 
-    med_lev = median([r['avg_lev'] for r in rows])
-    med_freq = median([r['trades'] for r in rows])
+    med_lev = median([r['avg_leverage'] for r in rows]) if rows else 0.0
+    med_freq = median([r['trades'] for r in rows]) if rows else 0.0
 
     segments = {
-        'High leverage': [r for r in rows if r['avg_lev'] >= med_lev],
-        'Low leverage': [r for r in rows if r['avg_lev'] < med_lev],
+        'High leverage': [r for r in rows if r['avg_leverage'] >= med_lev],
+        'Low leverage': [r for r in rows if r['avg_leverage'] < med_lev],
         'Frequent traders': [r for r in rows if r['trades'] >= med_freq],
         'Infrequent traders': [r for r in rows if r['trades'] < med_freq],
         'Consistent winners': [r for r in rows if r['win_rate'] >= 0.55],
         'Inconsistent': [r for r in rows if r['win_rate'] < 0.55],
     }
 
-    summary = {}
+    out = {}
     for name, members in segments.items():
         if not members:
             continue
-        summary[name] = {
+        out[name] = {
             'n_traders': len(members),
             'avg_total_pnl': round(mean([m['total_pnl'] for m in members]), 2),
             'avg_win_rate': round(mean([m['win_rate'] for m in members]), 4),
             'avg_trades': round(mean([m['trades'] for m in members]), 2),
-            'avg_leverage': round(mean([m['avg_lev'] for m in members]), 2),
+            'avg_leverage': round(mean([m['avg_leverage'] for m in members]), 2),
         }
-    return summary
+    return out
 
 
 def write_csv(path: Path, rows):
     if not rows:
         return
     with path.open('w', newline='') as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        w.writeheader()
-        w.writerows(rows)
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def write_svg_bar(path: Path, data: dict, title: str, y_label: str):
-    width, height = 640, 360
-    m = 40
+    width, height, margin = 700, 380, 45
     keys = list(data.keys())
     vals = [data[k] for k in keys]
-    maxv = max(vals) if vals else 1
-    bar_w = (width - 2 * m) / max(1, len(keys))
-    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">',
-             f'<text x="{width/2}" y="20" text-anchor="middle" font-size="16">{title}</text>']
-    parts.append(f'<line x1="{m}" y1="{height-m}" x2="{width-m}" y2="{height-m}" stroke="black"/>')
-    parts.append(f'<line x1="{m}" y1="{m}" x2="{m}" y2="{height-m}" stroke="black"/>')
+    if not vals:
+        vals = [0]
+    min_v, max_v = min(vals), max(vals)
+    span = max(max_v - min_v, 1.0)
+
+    bar_w = (width - 2 * margin) / max(1, len(keys))
+    zero_y = height - margin - ((0 - min_v) / span) * (height - 2 * margin)
+
+    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">']
+    parts.append(f'<text x="{width/2}" y="24" text-anchor="middle" font-size="16">{title}</text>')
+    parts.append(f'<line x1="{margin}" y1="{height-margin}" x2="{width-margin}" y2="{height-margin}" stroke="black"/>')
+    parts.append(f'<line x1="{margin}" y1="{margin}" x2="{margin}" y2="{height-margin}" stroke="black"/>')
+    parts.append(f'<line x1="{margin}" y1="{zero_y:.1f}" x2="{width-margin}" y2="{zero_y:.1f}" stroke="#888" stroke-dasharray="4 3"/>')
+
     for i, (k, v) in enumerate(zip(keys, vals)):
-        h = 0 if maxv == 0 else (v / maxv) * (height - 2 * m)
-        x = m + i * bar_w + 10
-        y = height - m - h
-        parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w-20:.1f}" height="{h:.1f}" fill="#4e79a7"/>')
-        parts.append(f'<text x="{x + (bar_w-20)/2:.1f}" y="{height-m+15}" text-anchor="middle" font-size="12">{k}</text>')
-        parts.append(f'<text x="{x + (bar_w-20)/2:.1f}" y="{y-5:.1f}" text-anchor="middle" font-size="11">{v:.2f}</text>')
-    parts.append(f'<text x="15" y="{height/2}" transform="rotate(-90, 15, {height/2})" text-anchor="middle" font-size="12">{y_label}</text>')
+        x = margin + i * bar_w + 10
+        y_v = height - margin - ((v - min_v) / span) * (height - 2 * margin)
+        y0 = zero_y
+        rect_y = min(y0, y_v)
+        rect_h = max(1.0, abs(y_v - y0))
+        color = '#4e79a7' if v >= 0 else '#e15759'
+        parts.append(f'<rect x="{x:.1f}" y="{rect_y:.1f}" width="{bar_w-20:.1f}" height="{rect_h:.1f}" fill="{color}"/>')
+        parts.append(f'<text x="{x + (bar_w-20)/2:.1f}" y="{height-margin+18}" text-anchor="middle" font-size="12">{k}</text>')
+        parts.append(f'<text x="{x + (bar_w-20)/2:.1f}" y="{rect_y-6:.1f}" text-anchor="middle" font-size="11">{v:.2f}</text>')
+
+    parts.append(f'<text x="14" y="{height/2}" transform="rotate(-90, 14, {height/2})" text-anchor="middle" font-size="12">{y_label}</text>')
     parts.append('</svg>')
     path.write_text('\n'.join(parts))
 
 
-def render_report(sent_prof, trade_prof, comp, seg):
+def build_report(out_dir: Path, sent_profile, trade_profile, comp, seg):
     fear = comp.get('Fear', {})
     greed = comp.get('Greed', {})
+
     lines = [
         '# Bitcoin Market Sentiment vs Trader Behavior',
         '',
         '## Methodology',
-        '- Loaded sentiment and trade datasets, profiled rows/columns/missing values/duplicates, and parsed timestamps to daily grain.',
-        '- Aligned trades with same-day sentiment labels and computed daily metrics: PnL, win rate, average size, leverage, trade count, and long/short ratio.',
-        '- Compared Fear vs Greed periods and created trader segments (high vs low leverage, frequent vs infrequent, consistent vs inconsistent winners).',
+        '- Load and profile sentiment/trade CSV files (rows, columns, missing values, duplicates).',
+        '- Normalize timestamps to daily dates and align trade records with same-day sentiment.',
+        '- Compute daily metrics, compare Fear vs Greed periods, and build trader segments.',
         '',
-        '## Part A — Data Preparation',
-        f"- Sentiment dataset: **{sent_prof['rows']} rows**, **{sent_prof['cols']} columns**, duplicates={sent_prof['duplicates']}, missing={sent_prof['missing']}.",
-        f"- Trades dataset: **{trade_prof['rows']} rows**, **{trade_prof['cols']} columns**, duplicates={trade_prof['duplicates']}, missing={trade_prof['missing']}.",
-        '- Timestamps converted to date and joined by date (daily level).',
+        '## Part A — Data preparation',
+        f"- Sentiment: rows={sent_profile['rows']}, cols={sent_profile['cols']}, duplicates={sent_profile['duplicates']}, missing={sent_profile['missing']}",
+        f"- Trades: rows={trade_profile['rows']}, cols={trade_profile['cols']}, duplicates={trade_profile['duplicates']}, missing={trade_profile['missing']}",
+        '- Timestamp fields converted/aligned at daily level.',
         '',
-        '## Part B — Evidence-based Analysis',
-        '### Fear vs Greed comparison',
+        '## Part B — Analysis',
+        '### Fear vs Greed',
         '',
         '| Metric | Fear | Greed |',
         '|---|---:|---:|',
-        f"| Days | {fear.get('days',0)} | {greed.get('days',0)} |",
-        f"| Avg daily PnL | {fear.get('avg_daily_pnl',0)} | {greed.get('avg_daily_pnl',0)} |",
-        f"| Avg win rate | {fear.get('avg_win_rate',0)} | {greed.get('avg_win_rate',0)} |",
-        f"| Drawdown proxy (worst day PnL) | {fear.get('drawdown_proxy',0)} | {greed.get('drawdown_proxy',0)} |",
-        f"| Avg trades/day | {fear.get('avg_trades_per_day',0)} | {greed.get('avg_trades_per_day',0)} |",
-        f"| Avg leverage | {fear.get('avg_leverage',0)} | {greed.get('avg_leverage',0)} |",
+        f"| Days | {fear.get('days', 0)} | {greed.get('days', 0)} |",
+        f"| Avg daily PnL | {fear.get('avg_daily_pnl', 0)} | {greed.get('avg_daily_pnl', 0)} |",
+        f"| Avg win rate | {fear.get('avg_win_rate', 0)} | {greed.get('avg_win_rate', 0)} |",
+        f"| Drawdown proxy | {fear.get('drawdown_proxy', 0)} | {greed.get('drawdown_proxy', 0)} |",
+        f"| Avg trades/day | {fear.get('avg_trades_per_day', 0)} | {greed.get('avg_trades_per_day', 0)} |",
+        f"| Avg leverage | {fear.get('avg_leverage', 0)} | {greed.get('avg_leverage', 0)} |",
         '',
-        '### Segment summary',
+        '### Segments',
         '',
         '| Segment | # Traders | Avg total PnL | Avg win rate | Avg trades | Avg leverage |',
         '|---|---:|---:|---:|---:|---:|',
     ]
+
     for k, v in seg.items():
         lines.append(f"| {k} | {v['n_traders']} | {v['avg_total_pnl']} | {v['avg_win_rate']} | {v['avg_trades']} | {v['avg_leverage']} |")
 
-    insights = []
-    if greed and fear:
-        insights.append(f"Greed days showed stronger profitability than Fear days (avg daily PnL {greed['avg_daily_pnl']} vs {fear['avg_daily_pnl']}) and higher win rate ({greed['avg_win_rate']:.2%} vs {fear['avg_win_rate']:.2%}).")
-        insights.append(f"Risk was asymmetric: Fear days had a deeper drawdown proxy ({fear['drawdown_proxy']}) than Greed days ({greed['drawdown_proxy']}).")
-        insights.append(f"Behavior shifted mildly by sentiment: trades/day and leverage differed (Fear {fear['avg_trades_per_day']} trades/day, lev {fear['avg_leverage']}; Greed {greed['avg_trades_per_day']} trades/day, lev {greed['avg_leverage']}).")
+    lines.extend(
+        [
+            '',
+            '### Key insights',
+            f"- Performance differs by sentiment: Fear avg PnL={fear.get('avg_daily_pnl',0)} vs Greed avg PnL={greed.get('avg_daily_pnl',0)}.",
+            f"- Risk profile differs: drawdown proxy Fear={fear.get('drawdown_proxy',0)} vs Greed={greed.get('drawdown_proxy',0)}.",
+            f"- Behavior shifts: avg trades/day and leverage differ between Fear and Greed regimes.",
+            '',
+            '## Part C — Actionable output',
+            '1. During Fear days, reduce leverage and position size for high-leverage/inconsistent segments.',
+            '2. During Greed days, allow higher trade frequency only for consistent winners while keeping risk caps fixed.',
+        ]
+    )
 
-    lines += [
-        '',
-        '### Key insights (3)',
-    ]
-    lines += [f'- {x}' for x in insights[:3]]
-
-    lines += [
-        '',
-        '## Part C — Actionable Output',
-        '1. **Fear-day defensive rule:** For high-leverage and inconsistent traders, cap leverage near the low-leverage segment average and reduce trade frequency until sentiment exits Fear.',
-        '2. **Greed-day selective aggression:** Allow slightly higher trade frequency for consistent winners, while keeping position sizing constant to avoid oversized downside tails.',
-        '',
-        '## Artifacts',
-        '- `outputs/daily_metrics.csv`',
-        '- `outputs/fear_vs_greed_comparison.csv`',
-        '- `outputs/segment_summary.csv`',
-        '- `outputs/pnl_by_sentiment.svg`',
-        '- `outputs/winrate_by_sentiment.svg`',
-    ]
-    (OUT_DIR / 'report.md').write_text('\n'.join(lines))
+    (out_dir / 'report.md').write_text('\n'.join(lines))
 
 
 def main():
-    sent_prof = profile_csv(SENTIMENT_FILE)
-    trade_prof = profile_csv(TRADES_FILE)
-    sentiment = load_sentiment(sent_prof['data'])
-    trades = load_trades(trade_prof['data'])
+    parser = argparse.ArgumentParser(description='Fear/Greed trader behavior analysis')
+    parser.add_argument('--sentiment', default='data/sentiment.csv', help='Path to sentiment CSV')
+    parser.add_argument('--trades', default='data/trades.csv', help='Path to trades CSV')
+    parser.add_argument('--outdir', default='outputs', help='Output directory')
+    args = parser.parse_args()
+
+    out_dir = Path(args.outdir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    sent_rows, sent_headers, sentiment = load_sentiment(Path(args.sentiment))
+    trade_rows, trade_headers, trades = load_trades(Path(args.trades))
+
+    sent_profile = profile_rows(sent_rows, sent_headers)
+    trade_profile = profile_rows(trade_rows, trade_headers)
 
     daily = summarize_daily(trades, sentiment)
-    comp = grouped_comparison(daily)
-    seg = build_trader_segments(trades)
+    comp = compare_fear_greed(daily)
+    seg = segment_traders(trades)
 
-    write_csv(OUT_DIR / 'daily_metrics.csv', daily)
-    comp_rows = [{'sentiment': k, **v} for k, v in comp.items()]
-    write_csv(OUT_DIR / 'fear_vs_greed_comparison.csv', comp_rows)
-    seg_rows = [{'segment': k, **v} for k, v in seg.items()]
-    write_csv(OUT_DIR / 'segment_summary.csv', seg_rows)
+    write_csv(out_dir / 'daily_metrics.csv', daily)
+    write_csv(out_dir / 'fear_vs_greed_comparison.csv', [{'sentiment': k, **v} for k, v in comp.items()])
+    write_csv(out_dir / 'segment_summary.csv', [{'segment': k, **v} for k, v in seg.items()])
+    write_svg_bar(out_dir / 'pnl_by_sentiment.svg', {k: v['avg_daily_pnl'] for k, v in comp.items()}, 'Average Daily PnL by Sentiment', 'PnL')
+    write_svg_bar(out_dir / 'winrate_by_sentiment.svg', {k: 100 * v['avg_win_rate'] for k, v in comp.items()}, 'Win Rate by Sentiment', 'Win rate %')
+    build_report(out_dir, sent_profile, trade_profile, comp, seg)
 
-    write_svg_bar(OUT_DIR / 'pnl_by_sentiment.svg', {k: v['avg_daily_pnl'] for k, v in comp.items()}, 'Average Daily PnL by Sentiment', 'PnL')
-    write_svg_bar(OUT_DIR / 'winrate_by_sentiment.svg', {k: v['avg_win_rate'] * 100 for k, v in comp.items()}, 'Win Rate (%) by Sentiment', 'Win Rate %')
-
-    render_report(sent_prof, trade_prof, comp, seg)
-    print('Analysis complete. See outputs/report.md')
+    print('Analysis complete.')
+    print(f'Sentiment records: {len(sentiment)} | Trades: {len(trades)} | Output dir: {out_dir}')
 
 
 if __name__ == '__main__':
