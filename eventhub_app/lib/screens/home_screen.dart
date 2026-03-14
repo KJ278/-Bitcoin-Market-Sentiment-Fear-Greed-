@@ -27,7 +27,12 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _eventsFuture = _apiService.fetchEvents();
     });
-    await _eventsFuture;
+
+    try {
+      await _eventsFuture;
+    } catch (_) {
+      // fetchEvents already applies fallback; keep refresh safe.
+    }
   }
 
   void _openEventDetails(Event event) {

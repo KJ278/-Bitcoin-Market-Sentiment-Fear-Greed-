@@ -68,6 +68,8 @@ class EventCard extends StatelessWidget {
                   const SizedBox(height: 6),
                   Text('📍 ${event.location}'),
                   const SizedBox(height: 2),
+                  Text('📅 ${event.date}'),
+                  const SizedBox(height: 2),
                   Text('💸 ${event.price}'),
                 ],
               ),
