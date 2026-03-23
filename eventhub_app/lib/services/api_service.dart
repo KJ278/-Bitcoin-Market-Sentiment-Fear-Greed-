@@ -8,8 +8,8 @@ import '../utils/constants.dart';
 
 /// Handles all event API communication.
 ///
-/// If the remote API is unavailable, we return local fallback data so the app
-/// still works during development and demos.
+/// If the remote API is unavailable, local fallback data is returned so the app
+/// remains functional in development/demo environments.
 class ApiService {
   final http.Client _client;
 
@@ -26,21 +26,20 @@ class ApiService {
       }
 
       final dynamic decoded = jsonDecode(response.body);
+      List<dynamic> rawEvents = <dynamic>[];
 
-      // Accept either a list payload or an object wrapping the list.
-      final List<dynamic> rawEvents = switch (decoded) {
-        List<dynamic> list => list,
-        Map<String, dynamic> map when map['events'] is List<dynamic> =>
-          map['events'] as List<dynamic>,
-        _ => <dynamic>[]
-      };
+      // Support either: [ {...}, {...} ] OR { "events": [ ... ] }
+      if (decoded is List<dynamic>) {
+        rawEvents = decoded;
+      } else if (decoded is Map<String, dynamic> && decoded['events'] is List<dynamic>) {
+        rawEvents = decoded['events'] as List<dynamic>;
+      }
 
       final events = rawEvents
           .whereType<Map<String, dynamic>>()
           .map(Event.fromJson)
           .toList();
 
-      // Keep UI functional even if backend returns an empty list.
       return events.isEmpty ? _fallbackEvents : events;
     } on TimeoutException {
       return _fallbackEvents;

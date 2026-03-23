@@ -18,7 +18,7 @@ class EventDetailScreen extends StatelessWidget {
     }
 
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!launched && context.mounted) {
+    if (!launched) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not open event link')),
       );
