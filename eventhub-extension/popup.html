@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EventHub</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <h1>EventHub</h1>
+        <button id="refreshBtn" class="btn" type="button">Refresh</button>
+      </header>
+
+      <section class="filters">
+        <select id="platformFilter" aria-label="Filter by platform">
+          <option value="all">All Platforms</option>
+          <option value="BookMyShow">BookMyShow</option>
+          <option value="Insider">Insider</option>
+          <option value="District">District</option>
+        </select>
+        <input id="dateFilter" type="date" aria-label="Filter by date" />
+      </section>
+
+      <p id="statusText" class="status">Loading events...</p>
+      <section id="eventsContainer" class="events"></section>
+    </main>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
