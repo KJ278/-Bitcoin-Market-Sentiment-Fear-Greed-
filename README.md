@@ -1,123 +1,58 @@
-# Binance Futures Testnet Trading Bot (Simplified)
+# Bitcoin Market Sentiment vs Trader Behavior (Fear/Greed)
 
-A small Python CLI application that places **MARKET** and **LIMIT** orders on **Binance Futures Testnet (USDT-M)**.
+This project is configured so you can use **your own files** from a folder named:
 
-## Features
+- `fear_greed_index/`
 
-- Place `MARKET` and `LIMIT` orders
-- Supports both `BUY` and `SELL`
-- CLI arguments with validation
-- Clear terminal output for request and response summary
-- Structured code with separate API/client, service logic, validation, and logging modules
-- Logs API requests, responses, and errors to file
-- Handles invalid input, API errors, and network failures
-- Bonus: `--mock` mode for local/demo runs without credentials
+## 1) Put your data in `fear_greed_index/`
 
-## Project Structure
+Add two CSV files in that folder:
 
-```text
-.
-├── bot/
-│   ├── __init__.py
-│   ├── client.py
-│   ├── logging_config.py
-│   ├── orders.py
-│   └── validators.py
-├── cli.py
-├── logs/
-│   ├── market_order.log
-│   └── limit_order.log
-├── requirements.txt
-└── README.md
-```
+- a **sentiment** CSV (example schema you shared):
+  - `timestamp` (Unix seconds) or `date`
+  - `value`
+  - `classification` (Fear / Extreme Fear / Neutral / Greed / Extreme Greed)
+- a **trades** CSV:
+  - required: date/timestamp + pnl
+  - recommended: trader_id, side, trade_size, leverage
 
-## Prerequisites
+> File names can vary. The script will auto-detect sentiment/trades files by filename hints.
 
-- Python 3.9+
-- Binance Futures Testnet account
-- Testnet API credentials
-- Base URL: `https://testnet.binancefuture.com`
-
-## Setup
+## 2) Run
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python analysis.py
 ```
 
-Export credentials (for real API calls):
+Default behavior:
+- input folder: `fear_greed_index/`
+- output folder: `outputs/`
+
+## 3) Optional explicit file paths
 
 ```bash
-export BINANCE_API_KEY="your_testnet_api_key"
-export BINANCE_API_SECRET="your_testnet_api_secret"
+python analysis.py \
+  --sentiment fear_greed_index/my_sentiment.csv \
+  --trades fear_greed_index/my_trades.csv \
+  --outdir outputs
 ```
 
-## Usage
-
-### MARKET order
+You can also change the input folder root:
 
 ```bash
-python cli.py \
-  --symbol BTCUSDT \
-  --side BUY \
-  --order-type MARKET \
-  --quantity 0.001
+python analysis.py --input-dir fear_greed_index --outdir outputs
 ```
 
-### LIMIT order
+## Generated deliverables
 
-```bash
-python cli.py \
-  --symbol BTCUSDT \
-  --side SELL \
-  --order-type LIMIT \
-  --quantity 0.001 \
-  --price 75000
-```
+- `outputs/report.md` (methodology + insights + strategy ideas)
+- `outputs/daily_metrics.csv`
+- `outputs/fear_vs_greed_comparison.csv`
+- `outputs/segment_summary.csv`
+- `outputs/pnl_by_sentiment.svg`
+- `outputs/winrate_by_sentiment.svg`
 
-### Mock mode (no API credentials required)
+## Current repo examples
 
-```bash
-python cli.py \
-  --symbol BTCUSDT \
-  --side BUY \
-  --order-type MARKET \
-  --quantity 0.001 \
-  --mock
-```
-
-You can also set custom log output path:
-
-```bash
-python cli.py ... --log-file logs/custom.log
-```
-
-## Output
-
-The CLI prints:
-
-- Order request summary
-- Order response details:
-  - `orderId`
-  - `status`
-  - `executedQty`
-  - `avgPrice` (if available)
-- Success/failure message
-
-## Logging
-
-- Default log file: `logs/trading_bot.log`
-- Includes order requests, responses, and errors with timestamps and log levels.
-
-Included sample logs:
-
-- `logs/market_order.log` (MARKET order)
-- `logs/limit_order.log` (LIMIT order)
-
-## Assumptions
-
-- Symbols are validated with basic formatting rules (`BTCUSDT` style), while exact symbol validity is verified by Binance API.
-- Quantity and price precision/step-size constraints are enforced by Binance exchange filters (not pre-fetched in this simplified version).
-- LIMIT orders are submitted with `timeInForce=GTC`.
-- `avgPrice` may be `0`/empty for non-filled orders.
+- `fear_greed_index/sentiment.csv`
+- `fear_greed_index/trades.csv`
