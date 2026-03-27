@@ -1,0 +1,7 @@
+segment,n_traders,avg_total_pnl,avg_win_rate,avg_trades,avg_leverage
+High leverage,10,-13.25,0.4523,45.1,5.88
+Low leverage,10,41.07,0.4847,44.8,5.31
+Frequent traders,10,-20.92,0.4736,50.4,5.55
+Infrequent traders,10,48.74,0.4634,39.5,5.64
+Consistent winners,1,325.81,0.6111,36,5.28
+Inconsistent,19,-2.5,0.461,45.42,5.61
